@@ -1,0 +1,79 @@
+import RPi.GPIO as GPIO
+import socket
+import time
+
+# Define the GPIO pins for the LEDs and buttons
+LED_PINS = [17, 27, 22, 5, 6, 13, 19, 26]
+BUTTON_PINS = [18, 23, 24, 25, 12, 16, 20, 21]
+
+# Predefined materials
+PREDEFINED_MATERIALS = ["MATERIAL1", "MATERIAL2", "MATERIAL3", "MATERIAL4", "MATERIAL5", "MATERIAL6", "MATERIAL7", "MATERIAL8"]
+
+# Setup GPIO
+GPIO.setmode(GPIO.BCM)
+for pin in LED_PINS:
+    GPIO.setup(pin, GPIO.OUT)
+    GPIO.output(pin, GPIO.LOW)  # Ensure all LEDs start off
+
+for pin in BUTTON_PINS:
+    GPIO.setup(pin, GPIO.IN, pull_up_down=GPIO.PUD_UP)  # Button with internal pull-up resistor
+
+# Define the server address and port
+SERVER_IP = '0.0.0.0'  # Listen on all interfaces
+SERVER_PORT = 5000
+
+def light_all_leds():
+    """Turn on all LEDs simultaneously."""
+    for pin in LED_PINS:
+        GPIO.output(pin, GPIO.HIGH)
+        print(f"LED on pin {pin} is ON.")  # Debugging print statement
+
+def button_callback(channel):
+    """Callback function to turn off the LED when the corresponding button is pressed."""
+    button_index = BUTTON_PINS.index(channel)
+    led_pin = LED_PINS[button_index]
+    GPIO.output(led_pin, GPIO.LOW)
+    print(f"LED on pin {led_pin} is now OFF.")  # Debugging print statement
+
+def handle_client_connection(client_socket):
+    try:
+        request = client_socket.recv(1024).decode()
+        print(f"Received: {request}")
+        if request.startswith('Material:'):
+            material_code = request.split(':')[1].strip()
+            print(f"Material code received: {material_code}")
+            if material_code in PREDEFINED_MATERIALS:
+                light_all_leds()  # Turn on all LEDs
+                client_socket.sendall(b'All LEDs turned on for the material code\n')
+            else:
+                client_socket.sendall(b'Material code not recognized\n')
+        else:
+            client_socket.sendall(b'Unknown command\n')
+    except Exception as e:
+        print(f"Error handling client connection: {e}")
+    finally:
+        client_socket.close()
+
+def main():
+    # Add event detection for all buttons
+    for pin in BUTTON_PINS:
+        GPIO.add_event_detect(pin, GPIO.FALLING, callback=button_callback, bouncetime=300)
+        
+    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server.bind((SERVER_IP, SERVER_PORT))
+    server.listen(5)
+    print(f"Listening on {SERVER_IP}:{SERVER_PORT}")
+
+    try:
+        while True:
+            client_socket, addr = server.accept()
+            print(f"Accepted connection from {addr}")
+            handle_client_connection(client_socket)
+    except KeyboardInterrupt:
+        print("Server shutting down...")
+    finally:
+        server.close()
+        GPIO.cleanup()
+
+if __name__ == "__main__":
+    main()

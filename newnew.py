@@ -1,86 +1,72 @@
 import RPi.GPIO as GPIO
 import socket
-import json
-import time
 
-# Setup GPIO pins for LEDs and buttons
-LED_PINS = [17, 18, 27, 22, 23]  # Replace with actual GPIO pin numbers
-BUTTON_PINS = [5, 6, 13, 19, 26]  # Replace with actual GPIO pin numbers
+# Define GPIO pin numbers for LEDs and buttons
+led_pins = [18, 23, 24, 25, 12]  # Replace with your GPIO pins
+button_pins = [5, 6, 13, 19, 26]  # Replace with your GPIO pins
 
+# Predefined materials and corresponding LED indices
+predefined_materials = ["3MC0200070519", "3MC1098060001", "3MC0245050300", "Material4", "Material5"]
+
+# Setup GPIO
 GPIO.setmode(GPIO.BCM)
-GPIO.setwarnings(False)
+for pin in led_pins:
+    GPIO.setup(pin, GPIO.OUT)
+    GPIO.output(pin, GPIO.LOW)
 
-for led_pin in LED_PINS:
-    GPIO.setup(led_pin, GPIO.OUT)
+for pin in button_pins:
+    GPIO.setup(pin, GPIO.IN, pull_up_down=GPIO.PUD_UP)
+
+def wait_for_confirmation(led_pin, button_pin, material_code):
+    GPIO.output(led_pin, GPIO.HIGH)
+    while GPIO.input(button_pin):
+        pass  # Wait for button press
     GPIO.output(led_pin, GPIO.LOW)
+    return material_code
 
-for button_pin in BUTTON_PINS:
-    GPIO.setup(button_pin, GPIO.IN, pull_up_down=GPIO.PUD_UP)
+def handle_materials(material_codes):
+    active_leds = []
+    for material_code in material_codes:
+        if material_code in predefined_materials:
+            index = predefined_materials.index(material_code)
+            led_pin = led_pins[index]
+            button_pin = button_pins[index]
+            GPIO.output(led_pin, GPIO.HIGH)
+            active_leds.append((led_pin, button_pin, material_code))
+    
+    # Wait for button press and handle each LED
+    for led_pin, button_pin, material_code in active_leds:
+        confirmed_material = wait_for_confirmation(led_pin, button_pin, material_code)
+        send_signal_to_main_app(confirmed_material)
 
-# Predefined materials for each LED and button
-PREDEFINED_MATERIALS = [
-    'Material_A',  # Corresponds to LED 0 and Button 0
-    'Material_B',  # Corresponds to LED 1 and Button 1
-    'Material_C',  # Corresponds to LED 2 and Button 2
-    'Material_D',  # Corresponds to LED 3 and Button 3
-    'Material_E',  # Corresponds to LED 4 and Button 4
-]
+def send_signal_to_main_app(material_code):
+    server_ip = "10.110.20.205"  # Replace with your Raspberry Pi IP address
+    server_port = 6000  # Different port for sending back the signal
+    client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    client_socket.connect((server_ip, server_port))
+    client_socket.sendall(material_code.encode())
+    client_socket.close()
 
-# Server setup
-HOST = '0.0.0.0'
-PORT = 5005
+def start_server():
+    server_ip = "10.110.20.205"  # Replace with your Raspberry Pi IP address
+    server_port = 5000
+    server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server_socket.bind((server_ip, server_port))
+    server_socket.listen(5)
+    print("Server listening on {}:{}".format(server_ip, server_port))
 
-def light_up_leds(material_indices):
-    for i in material_indices:
-        if i < len(LED_PINS):  # Ensure the index is within bounds
-            GPIO.output(LED_PINS[i], GPIO.HIGH)
-        else:
-            print(f"Invalid LED index: {i}")
-
-def wait_for_button_press():
     while True:
-        for i, button_pin in enumerate(BUTTON_PINS):
-            if GPIO.input(button_pin) == GPIO.LOW:
-                # Turn off the corresponding LED when button is pressed
-                GPIO.output(LED_PINS[i], GPIO.LOW)
-                print(f"Button {i} pressed")
-                return i
-
-def main():
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind((HOST, PORT))
-        s.listen()
-
-        while True:
-            conn, addr = s.accept()
-            with conn:
-                print(f"Connected by {addr}")
-                data = conn.recv(1024)
-                if not data:
-                    break
-
-                received_data = json.loads(data.decode('utf-8'))
-                print(f"Received data: {received_data}")
-
-                # Use predefined materials for button indices
-                material_indices = [PREDEFINED_MATERIALS.index(mat) for mat in received_data if mat in PREDEFINED_MATERIALS]
-                print(f"Material indices: {material_indices}")
-
-                light_up_leds(material_indices)
-
-                for _ in material_indices:
-                    button_index = wait_for_button_press()
-                    print(f"Button index: {button_index}")
-
-                    if 0 <= button_index < len(PREDEFINED_MATERIALS):
-                        material = PREDEFINED_MATERIALS[button_index]
-                        conn.sendall(str.encode(material))
-                    else:
-                        print(f"Button index out of range: {button_index}")
-                        conn.sendall(str.encode("Error: Button index out of range"))
+        client_socket, addr = server_socket.accept()
+        print("Connection from:", addr)
+        material_codes = client_socket.recv(1024).decode().split(',')
+        print("Received material codes:", material_codes)
+        handle_materials(material_codes)
+        client_socket.close()
 
 if __name__ == "__main__":
     try:
-        main()
+        start_server()
     except KeyboardInterrupt:
+        print("Shutting down server...")
+    finally:
         GPIO.cleanup()

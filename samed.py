@@ -74,9 +74,3 @@ def main():
  
 if __name__ == "__main__":
     main()
-
-Dispose d’un menu contextuel
-Fkiri, Samed est en train d’écrire....
-
-
-Dispose d’un menu contextuel

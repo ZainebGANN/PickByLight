@@ -1,0 +1,106 @@
+from flask import Flask, request, jsonify
+import RPi.GPIO as GPIO
+import threading
+import time
+import mysql.connector
+
+app = Flask(__name__)
+
+status_led_pin = 9  # Pin for the status LED
+
+def get_db_connection():
+    # Modify with your actual database connection details
+    return mysql.connector.connect(
+        host="10.110.10.204",
+        user="Zaineb",
+        password="Passw0rd123",
+        database="your_database_name"
+    )
+
+def fetch_led_button_config():
+    conn = get_db_connection()
+    cursor = conn.cursor(dictionary=True)
+    cursor.execute("SELECT material_code, led_pin, button_pin FROM led_button_config")
+    config = cursor.fetchall()
+    conn.close()
+
+    return {entry['material_code']: {'led': entry['led_pin'], 'button': entry['button_pin']} for entry in config}
+
+def setup_gpio(predefined_materials):
+    GPIO.setmode(GPIO.BCM)
+    GPIO.setwarnings(False)
+
+    for material, pins in predefined_materials.items():
+        GPIO.setup(pins['led'], GPIO.OUT)
+        GPIO.output(pins['led'], GPIO.LOW)
+        GPIO.setup(pins['button'], GPIO.IN, pull_up_down=GPIO.PUD_UP)
+
+    GPIO.setup(status_led_pin, GPIO.OUT)
+    GPIO.output(status_led_pin, GPIO.LOW)
+
+@app.route('/activate_leds', methods=['POST'])
+def activate_leds():
+    data = request.json
+    
+    if not data or 'materials' not in data or not isinstance(data['materials'], list):
+        return jsonify({'error': 'Invalid request format, expected a list of materials'}), 400
+    
+    matched_materials = data['materials']
+
+    # Light up LEDs for all matched materials
+    for material in matched_materials:
+        if material in predefined_materials:
+            GPIO.output(predefined_materials[material]['led'], GPIO.HIGH)
+        else:
+            print(f"Warning: Material '{material}' not found in database.")
+
+    return jsonify({'status': 'LEDs activated for matched materials'}), 200
+
+def button_callback(channel):
+    material = None
+    for mat, pins in predefined_materials.items():
+        if pins['button'] == channel:
+            material = mat
+            break
+
+    if material:
+        GPIO.output(predefined_materials[material]['led'], GPIO.LOW)
+        print(f"Button pressed for {material}, LED turned off.")
+
+def verify_leds(predefined_materials):
+    print("Verifying LEDs...")
+    for pins in predefined_materials.values():
+        GPIO.output(pins['led'], GPIO.HIGH)
+    time.sleep(2)
+    for pins in predefined_materials.values():
+        GPIO.output(pins['led'], GPIO.LOW)
+    print("LED verification complete.")
+
+def run_flask():
+    app.run(host='0.0.0.0', port=5000)
+
+def main():
+    try:
+        predefined_materials = fetch_led_button_config()
+        setup_gpio(predefined_materials)
+
+        GPIO.output(status_led_pin, GPIO.HIGH)
+        
+        verify_leds(predefined_materials)
+
+        for material, pins in predefined_materials.items():
+            GPIO.add_event_detect(pins['button'], GPIO.FALLING, callback=button_callback, bouncetime=200)
+
+        flask_thread = threading.Thread(target=run_flask, daemon=True)
+        flask_thread.start()
+
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        print("Exiting...")
+    finally:
+        GPIO.output(status_led_pin, GPIO.LOW)
+        GPIO.cleanup()
+
+if __name__ == '__main__':
+    main()
